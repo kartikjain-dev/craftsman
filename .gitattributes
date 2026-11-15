@@ -2,3 +2,6 @@
 # executable on macOS/Linux checkouts; Windows batch stays CRLF.
 * text=auto eol=lf
 *.cmd text eol=crlf
+# run-hook.cmd is a bash/batch polyglot that bash executes on macOS/Linux —
+# CRLF breaks it there (": command not found"). cmd.exe accepts LF fine.
+craftsman-plugin/hooks/run-hook.cmd text eol=lf
