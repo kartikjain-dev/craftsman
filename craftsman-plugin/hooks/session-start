@@ -30,6 +30,23 @@ if [ -n "$models_note" ]; then
     reminder="${reminder}"$'\n\n'"${models_note}"
 fi
 
+# Regular state-machine audits: when this project's last
+# craftsman:implicit-state-machines run is older than CRAFTSMAN_STATE_AUDIT_DAYS
+# (default 30), add a one-line reminder to offer one. At most once a week per
+# project; scripts/state_audit.py keeps the dates.
+input=""
+[ -t 0 ] || input="$(cat 2>/dev/null || true)"
+for pybin in python3 python; do
+    if command -v "$pybin" >/dev/null 2>&1 && "$pybin" -c "import sys" >/dev/null 2>&1; then
+        cwd="$(printf '%s' "$input" | "$pybin" -c "import json,sys; print(json.load(sys.stdin).get('cwd') or '')" 2>/dev/null || true)"
+        audit_note="$("$pybin" "${PLUGIN_ROOT}/scripts/state_audit.py" due "${cwd:-$PWD}" 2>/dev/null || true)"
+        if [ -n "$audit_note" ]; then
+            reminder="${reminder}"$'\n\n'"${audit_note}"
+        fi
+        break
+    fi
+done
+
 reminder_escaped=$(escape_for_json "$reminder")
 session_context="<IMPORTANT>\n${reminder_escaped}\n</IMPORTANT>"
 

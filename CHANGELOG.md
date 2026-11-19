@@ -28,6 +28,18 @@ Version numbers track `.claude-plugin/plugin.json` (kept in sync with the root
   that lists each busy flag's set/reset lines, `finally`/`catch` resets, `mounted` checks and
   guards (Dart by default; `--ext .ts,.tsx` for TypeScript).
 
+- State machines are now checked without being asked:
+  - The edit guard spots edits that write a status value, add a status constraint or lifecycle
+    enum, or flip a busy flag. On the first one in a session it nudges the
+    `implicit-state-machines` checks for the machine being changed.
+  - The Stop close-out lists those files and asks for each machine to be reported as checked, or
+    named under Caveats.
+  - A new `pretooluse-skill-state-audit` hook records each audit per project in
+    `~/.claude/craftsman/state-audits.tsv`. When a git project's last audit is older than
+    `CRAFTSMAN_STATE_AUDIT_DAYS` (default 30; `0` turns it off), session start adds one line asking
+    Claude to offer `/craftsman:state-machines`, at most once a week.
+  - All of it is in the stdlib-only `scripts/state_audit.py`.
+
 ### Changed
 - `ui-craft` now covers the target, motion and speed. Before, it had two lines on motion and
   nothing on performance or on which device the UI runs on. New sections:

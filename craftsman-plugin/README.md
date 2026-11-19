@@ -67,7 +67,8 @@ craftsman-plugin/
 │   └── models.md                 /craftsman:models — model profiles, providers, Codex export
 ├── scripts/
 │   ├── craftsman-models          Applies a model profile to the agents
-│   └── craftsman-export          Exports agents + skills to Codex CLI
+│   ├── craftsman-export          Exports agents + skills to Codex CLI
+│   └── state_audit.py            State-write scan + audit dates for the state-machine hooks
 └── hooks/
     ├── hooks.json                    Hook wiring (SessionStart, UserPromptSubmit, PreToolUse, Stop)
     ├── run-hook.cmd                  Polyglot dispatcher (Windows CMD + Unix bash)
@@ -76,8 +77,9 @@ craftsman-plugin/
     ├── pretooluse-graphify-bash      "Use graphify first" hint on grep/find Bash calls
     ├── pretooluse-graphify-read      Same hint on Read/Glob of source files
     ├── pretooluse-git-guard          commit-craft hint on git commit/push/tag & gh pr calls
-    ├── pretooluse-edit-guard         File-pattern skill hints + drops the close-out session marker
-    └── stop-closeout                 Nudges caveats-and-status once, after real edits
+    ├── pretooluse-edit-guard         File-pattern skill hints, state-write nudge, close-out markers
+    ├── pretooluse-skill-state-audit  Records the date whenever implicit-state-machines runs
+    └── stop-closeout                 Nudges caveats-and-status once (plus a state check), after real edits
 ```
 
 ## MCP servers
@@ -223,6 +225,19 @@ derived or in-memory, traces every writer to `file:line`, and reports what the t
 are plus the bugs in the gaps: states with no exit on some path, states nothing sets, writes that
 skip a guard, persisted copies of derived states, and racing writers. Read-only; fixes are handed to
 `debugger` or `coder`.
+
+Hooks keep this checked without being asked:
+
+- **While you edit.** An edit that writes a status value, adds a status constraint or lifecycle enum,
+  or flips a busy flag gets a one-time nudge per session to check the machine it touches (other
+  writers, a way out of every error or running state, guards, a crash between writes).
+- **At the end.** The Stop close-out then lists those files and asks for each machine to be reported
+  as checked, or named under Caveats.
+- **On a schedule.** Each run is recorded per project in `~/.claude/craftsman/state-audits.tsv`. When
+  a git project's last audit is older than `CRAFTSMAN_STATE_AUDIT_DAYS` (default 30), the session
+  start adds a line asking Claude to offer `/craftsman:state-machines`. It never runs the audit unasked,
+  and the reminder comes at most once a week per project. Set `CRAFTSMAN_STATE_AUDIT_DAYS=0` to turn it
+  off.
 
 ### `/craftsman:discover <vague idea>`
 
@@ -397,9 +412,10 @@ plugin) and fires only when a real signal matches, so quiet turns stay quiet.
 |---|---|---|
 | `userpromptsubmit-task-router` (UserPromptSubmit) | Your prompt matches a task shape (bug, feature, refactor, security, release, CI, testing, docs, version-control) | The matching agent + skill for that shape; at most one primary nudge per prompt |
 | `pretooluse-git-guard` (PreToolUse: Bash) | A `git commit`/`push`/`tag` or `gh pr` command is about to run | `commit-craft` conventions |
-| `pretooluse-edit-guard` (PreToolUse: Edit/Write/MultiEdit) | Editing a special file — `KNOWN_ISSUES.md`, a test file, or a CI workflow | `logging-tradeoffs` / tester discipline / cicd-debugger. Also drops the session marker the Stop hook reads |
-| `stop-closeout` (Stop) | The session actually changed code (marker present) and hasn't been reminded yet | `caveats-and-status` close-out, exactly once |
-| `session-start` (SessionStart) | New/cleared/compacted session | The whole skill set + proactive environment-quirks / graphify check |
+| `pretooluse-edit-guard` (PreToolUse: Edit/Write/MultiEdit) | Editing a special file — `KNOWN_ISSUES.md`, a test file, or a CI workflow; or an edit that writes a status value, status constraint, lifecycle enum or busy flag (first one per session) | `logging-tradeoffs` / tester discipline / cicd-debugger / `implicit-state-machines`. Also drops the session markers the Stop hook reads |
+| `pretooluse-skill-state-audit` (PreToolUse: Skill) | `implicit-state-machines` is loaded | Nothing shown; records the project's audit date |
+| `stop-closeout` (Stop) | The session actually changed code (marker present) and hasn't been reminded yet | `caveats-and-status` close-out, exactly once; when state was written, also a check of those machines |
+| `session-start` (SessionStart) | New/cleared/compacted session | The whole skill set + proactive environment-quirks / graphify check; offering `/craftsman:state-machines` when the project's last audit is overdue |
 
 **Loop safety & noise control.** The Stop hook nudges only after a real edit (the edit-guard drops a
 per-session marker in a temp dir), fires **once**, then self-deletes the marker — and additionally

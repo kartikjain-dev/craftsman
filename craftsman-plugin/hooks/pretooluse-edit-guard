@@ -7,6 +7,9 @@
 #   2. Inject a file-pattern-specific craftsman-skill nudge for special files.
 #      The general smallest-change-first reminder lives in the prompt router, not
 #      here, so we don't nag on every single edit.
+#   3. Spot edits that write a state machine (status values, status constraints,
+#      lifecycle enums, busy flags) via scripts/state_audit.py, list those files
+#      for the Stop hook, and nudge craftsman:implicit-state-machines once.
 # Self-contained: references only craftsman:* skills / this plugin's agents.
 
 set -uo pipefail
@@ -47,14 +50,39 @@ if [ -n "$session_id" ]; then
 fi
 
 # 2. File-pattern nudges (quiet by design — only special files trigger a note).
+note=""
 low="$(printf '%s' "$file_path" | tr '[:upper:]' '[:lower:]' | tr '\\' '/')"
 case "$low" in
   *known_issues.md)
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Editing KNOWN_ISSUES.md — follow craftsman:logging-tradeoffs: one entry per documented shortcut with symptom, why, and the known-good fix."}}\n' ;;
+    note="Editing KNOWN_ISSUES.md — follow craftsman:logging-tradeoffs: one entry per documented shortcut with symptom, why, and the known-good fix." ;;
   *.test.*|*.spec.*|*_test.*|*/test/*|*/tests/*|*/__tests__/*)
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Editing a test file — this is the tester agent domain: keep production code untouched, add or adjust coverage only, and run the suite to verify."}}\n' ;;
+    note="Editing a test file — this is the tester agent domain: keep production code untouched, add or adjust coverage only, and run the suite to verify." ;;
   */.github/workflows/*)
-    printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"Editing a CI workflow — a local pass does not guarantee CI passes. If chasing a CI failure, root-cause with the cicd-debugger agent before editing YAML."}}\n' ;;
+    note="Editing a CI workflow — a local pass does not guarantee CI passes. If chasing a CI failure, root-cause with the cicd-debugger agent before editing YAML." ;;
 esac
+
+# 3. State writes: an edit that sets a status/state/stage value, adds a status
+#    constraint or lifecycle enum, or flips a busy flag changes a state machine.
+#    Every such file is listed for the Stop hook; the nudge itself fires once
+#    per session, on the first one, so it never nags.
+if [ -n "${pybin:-}" ] && [ -n "$session_id" ]; then
+  helper="$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd)/state_audit.py"
+  kinds="$(printf '%s' "$input" | "$pybin" "$helper" scan 2>/dev/null | paste -sd ',' - | sed 's/,/, /g')"
+  if [ -n "$kinds" ]; then
+    state_marker="${TMPDIR:-/tmp}/craftsman-hooks/state-$session_id"
+    first="no"
+    [ -f "$state_marker" ] || first="yes"
+    grep -qxF "$file_path" "$state_marker" 2>/dev/null || printf '%s\n' "$file_path" >> "$state_marker" 2>/dev/null || true
+    if [ "$first" = "yes" ]; then
+      state_note="This edit changes a state machine (${kinds}). Apply craftsman:implicit-state-machines step 3 to the machine you touch: find every other writer of that state, make sure each path into an error or running state has a way out (including the states a cron or sweeper selects), guard writes that must not move backwards, and think through a crash between separate writes. Busy flags reset in finally."
+      if [ -n "$note" ]; then note="${note} ${state_note}"; else note="$state_note"; fi
+    fi
+  fi
+fi
+
+if [ -n "$note" ]; then
+  # Notes are plain text: no double quotes or backslashes, so no JSON escaping.
+  printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"%s"}}\n' "$note"
+fi
 
 exit 0
