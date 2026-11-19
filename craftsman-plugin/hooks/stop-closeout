@@ -3,7 +3,9 @@
 # pretooluse-edit-guard hook), nudge a craftsman:caveats-and-status close-out
 # exactly once. Loop-safe two ways: it honours stop_hook_active AND deletes the
 # marker after firing, so it can never re-trigger itself. Fires nothing on
-# chat-only sessions (no marker => no nudge). Self-contained.
+# chat-only sessions (no marker => no nudge). When the edit guard saw state
+# writes (state-<session> marker), the same nudge also asks for those state
+# machines to be checked. Self-contained.
 
 set -uo pipefail
 
@@ -39,9 +41,26 @@ fi
 [ -n "$session_id" ] || exit 0
 
 marker="${TMPDIR:-/tmp}/craftsman-hooks/edited-$session_id"
+state_marker="${TMPDIR:-/tmp}/craftsman-hooks/state-$session_id"
 [ -f "$marker" ] || exit 0
 rm -f "$marker" 2>/dev/null || true
 
-printf '{"decision":"block","reason":"Code changed this session. Before finishing, close out in the craftsman:caveats-and-status format: a Status section (what you actually ran and verified vs. what you did not) and a Caveats section (assumptions made, known gaps). If you already provided both, just stop."}\n'
+reason="Code changed this session. Before finishing, close out in the craftsman:caveats-and-status format: a Status section (what you actually ran and verified vs. what you did not) and a Caveats section (assumptions made, known gaps). If you already provided both, just stop."
+
+# State writes this session (listed by pretooluse-edit-guard): ask for the
+# changed machines to be checked as part of the same close-out.
+if [ -f "$state_marker" ]; then
+  files="$(head -n 8 "$state_marker" 2>/dev/null | sed 's|.*/||' | paste -sd ',' - | sed 's/,/, /g')"
+  rm -f "$state_marker" 2>/dev/null || true
+  reason="${reason} This session also changed state-machine code (${files}). In the close-out, say for each machine you touched whether you checked it with craftsman:implicit-state-machines step 3 (other writers of that state, a way out of every error or running state, guards on writes that must not go backwards, a crash between writes); list what you did not check under Caveats."
+fi
+
+if [ -n "${pybin:-}" ]; then
+  REASON="$reason" "$pybin" -c 'import json, os; print(json.dumps({"decision": "block", "reason": os.environ["REASON"]}))'
+else
+  # No Python: file names may hold characters JSON needs escaped, so drop them.
+  reason="$(printf '%s' "$reason" | tr -d '"\\')"
+  printf '{"decision":"block","reason":"%s"}\n' "$reason"
+fi
 
 exit 0

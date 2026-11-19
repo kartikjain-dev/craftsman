@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# PreToolUse hook (Skill matcher) — when craftsman:implicit-state-machines is
+# loaded (directly or through /craftsman:state-machines), record that this
+# project was audited today, so the session-start reminder waits another
+# CRAFTSMAN_STATE_AUDIT_DAYS. Prints nothing and never blocks the tool.
+
+set -uo pipefail
+
+input="$(cat)"
+
+for pybin in python3 python; do
+  if command -v "$pybin" >/dev/null 2>&1 && "$pybin" -c "import sys" >/dev/null 2>&1; then
+    parsed="$(printf '%s' "$input" | "$pybin" -c "
+import json, sys
+d = json.load(sys.stdin)
+t = d.get('tool_input') or {}
+print(str(t.get('skill') or ''))
+print(str(d.get('cwd') or ''))
+" 2>/dev/null)"
+    skill="$(printf '%s' "$parsed" | sed -n '1p')"
+    cwd="$(printf '%s' "$parsed" | sed -n '2p')"
+    case "$skill" in
+      implicit-state-machines|*:implicit-state-machines)
+        helper="$(cd "$(dirname "$0")/../scripts" 2>/dev/null && pwd)/state_audit.py"
+        "$pybin" "$helper" record "${cwd:-$PWD}" >/dev/null 2>&1 || true ;;
+    esac
+    break
+  fi
+done
+
+exit 0
